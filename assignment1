@@ -1,0 +1,193 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 11.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2a
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.1.0/24
+      MapPublicIpOnLaunch: true
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2b
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.0.0/24
+      MapPublicIpOnLaunch: false
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTable
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetA
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetB
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "Internet Group"
+      GroupDescription: "SSH traffic in, all traffic out."
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+  wahajwebserver:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: wahaj-webserver
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: For traffic from Internet
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: For traffic from Internet
+      GroupDescription: Security Group for demo server
+      VpcId: !Ref VPC
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-east-2a
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+           sudo yum update -y
+           sudo yum install -y httpd24 php56 php56-mysqlnd
+           sudo service httpd start
+           sudo chkconfig httpd on
+           sudo groupadd www
+           sudo usermod -a -G www ec2-user
+           sudo chgrp -R www /var/www
+           sudo chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} +
+           find /var/www -type f -exec sudo chmod 0664 {} +
+           cd /var/www
+           mkdir inc
+           cd inc
+           sudo echo "<?php
+
+           define('DB_SERVER', '!GetAtt MyDB.DNSName');
+           define('DB_USERNAME', 'wahajdb');
+           define('DB_PASSWORD', 'wahaj123a');
+           define('DB_DATABASE', 'wahajdb');
+
+           ?>" > dbinfo.inc
+           sudo aws s3 cp s3://wahaj-webserver/SamplePage.php /var/www/html/SamplePage.php
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: "true"
+            VolumeSize: "8"
+            VolumeType: gp2
+      ImageId: ami-0bdcc6c05dec346bf
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref ListS3BucketsInstanceProfile
+      KeyName: wahaj(webserver)
+      NetworkInterfaces:
+        - Description: Primary network interface
+          DeviceIndex: 0
+          SubnetId: !Ref SubnetA
+          GroupSet:
+            - Ref: wahajwebserver
+  ListS3BucketsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref: S3FullAccess
+  ListS3BucketsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ListS3BucketsPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:List*
+            Resource: "*"
+      Roles:
+        - Ref: S3FullAccess
+  S3FullAccess:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+  MyDB:
+    Type: AWS::RDS::DBInstance
+    DependsOn: myDBSubnetGroup
+    Properties:
+      VPCSecurityGroups:
+        - !Ref DBEC2SecurityGroup
+      AllocatedStorage: "5"
+      DBInstanceClass: db.t2.micro
+      Engine: MySQL
+      EngineVersion: "5.7.22"
+      DBName: wahajdb
+      MasterUsername: wahajdb
+      MasterUserPassword: wahaj123a
+      MultiAZ: false
+      DBSubnetGroupName: MySubnetGroup
+  myDBSubnetGroup:
+    Properties:
+      DBSubnetGroupName: MySubnetGroup
+      DBSubnetGroupDescription: subnet group
+      SubnetIds:
+        - !Ref SubnetA
+        - !Ref SubnetB
+    Type: "AWS::RDS::DBSubnetGroup"
+  DBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open database for access
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref wahajwebserver
+
