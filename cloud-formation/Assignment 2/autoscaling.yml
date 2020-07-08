@@ -1,0 +1,200 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  SourceStackName:
+    Description: "Source stack name"
+    Type: String
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: "wahaj-vpc"
+  elb:
+    Description: "elb"
+    Type: String
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: "wahaj-elb"
+  bastion:
+    Description: "bastion host"
+    Type: String
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: "wahaj-bastion"
+Resources:
+  wahajwebserver:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: wahaj-webserver
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${bastion}-bsgId"
+          Description: For traffic from Internet
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${elb}-lgsg"
+          Description: For traffic from Internet
+      GroupDescription: Security Group for demo server
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: "${SourceStackName}-VpcID"
+  ec2instance:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      # AvailabilityZone: us-east-2a
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+           sudo yum update -y
+           sudo yum install -y httpd24 php56 php56-mysqlnd
+           sudo service httpd start
+           sudo chkconfig httpd on
+           sudo groupadd www
+           sudo usermod -a -G www ec2-user
+           sudo chgrp -R www /var/www
+           sudo chmod 2775 /var/www
+           find /var/www -type d -exec sudo chmod 2775 {} +
+           find /var/www -type f -exec sudo chmod 0664 {} +
+           cd /var/www
+           mkdir inc
+           cd inc
+           sudo echo "<?php
+
+           define('DB_SERVER', '!GetAtt InternalLB.DNSName'); 
+           define('DB_USERNAME', 'wahajdb');
+           define('DB_PASSWORD', 'wahaj123a');
+           define('DB_DATABASE', 'wahajdb');
+
+           ?>" > dbinfo.inc
+           sudo aws s3 cp s3://wahaj-webserver/SamplePage.php /var/www/html/SamplePage.php
+           echo "<h1> hello </h1>" > /var/www/html/index.html
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: "true"
+            VolumeSize: "8"
+            VolumeType: gp2
+      ImageId: ami-0bdcc6c05dec346bf
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref ListS3BucketsInstanceProfile
+      KeyName: wahaj(webserver)
+      SecurityGroups:
+        - Ref: wahajwebserver
+  ListS3BucketsInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: "/"
+      Roles:
+        - Ref: S3FullAccess
+  ListS3BucketsPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: ListS3BucketsPolicy
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:List*
+            Resource: "*"
+      Roles:
+        - Ref: S3FullAccess
+  S3FullAccess:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: "/"
+  myASG:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+        - "us-east-2a"
+        - "us-east-2b"
+      AutoScalingGroupName: myASG
+      LoadBalancerNames:
+        - Fn::ImportValue: !Sub "${elb}-MyLoadBalancer"
+      MinSize: "2"
+      MaxSize: "2"
+      DesiredCapacity: "2"
+      HealthCheckGracePeriod: 300
+      LaunchConfigurationName:
+        Ref: ec2instance
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub "${SourceStackName}-SubnetC"
+        - Fn::ImportValue: !Sub "${SourceStackName}-SubnetD"
+  internalelbsg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: internal-elb
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: "${SourceStackName}-VpcID"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !GetAtt wahajwebserver.GroupId
+          Description: For traffic from Internet
+      GroupDescription: Security Group for demo server
+  InternalLB:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Scheme: internal
+      Listeners:
+        - LoadBalancerPort: "80"
+          InstancePort: "80"
+          Protocol: HTTP
+        - LoadBalancerPort: "3306"
+          InstancePort: "3306"
+          Protocol: TCP
+      SecurityGroups:
+        - !Ref internalelbsg
+      LoadBalancerName: internalelbsg
+      Subnets:
+        - Fn::ImportValue: !Sub "${SourceStackName}-SubnetC"
+        - Fn::ImportValue: !Sub "${SourceStackName}-SubnetD"
+      HealthCheck:
+        Target: HTTP:80/index.html
+        HealthyThreshold: "3"
+        UnhealthyThreshold: "5"
+        Interval: "30"
+        Timeout: "5"
+Outputs:
+  Autoscaling:
+    Description: autoscaling
+    Value: !Ref myASG
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-myASG"
+  ec2instance:
+    Description: ec2instances
+    Value: !Ref ec2instance
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-ec2instance"
+  sg:
+    Description: ec2instances securitygroup
+    Value: !GetAtt wahajwebserver.GroupId
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-sg"
+  dns:
+    Description: dns
+    Value: !GetAtt InternalLB.DNSName
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-dns"
+  internalelb:
+    Description: internal elb
+    Value: !GetAtt internalelbsg.GroupId
+    Export:
+      Name:
+        Fn::Sub: "${AWS::StackName}-Ielb"
+
