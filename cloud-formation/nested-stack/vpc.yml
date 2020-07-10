@@ -1,0 +1,146 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 11.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2a
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.0.0/24
+      MapPublicIpOnLaunch: true
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2b
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.1.0/24
+      MapPublicIpOnLaunch: true
+  SubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2a
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.2.0/24
+      MapPublicIpOnLaunch: false
+  SubnetD:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-2b
+      VpcId: !Ref VPC
+      CidrBlock: 11.0.3.0/24
+      MapPublicIpOnLaunch: false
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  RouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref RouteTable
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetA
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable
+      SubnetId: !Ref SubnetB
+  SubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      SubnetId: !Ref SubnetC
+
+  SubnetDRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref RouteTable2
+      SubnetId: !Ref SubnetD
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "Internet Group"
+      GroupDescription: "SSH traffic in, all traffic out."
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+  NAT:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+          - EIP
+          - AllocationId
+      SubnetId:
+        Ref: SubnetA
+      Tags:
+        - Key: Name
+          Value: wahaj-nat
+  EIP:
+    DependsOn: VPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+  Route:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: RouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId:
+        Ref: NAT
+Outputs:
+  vpcID:
+    Description: VPC id
+    Value: !Ref VPC
+    Export:
+      Name: "VpcID"
+  SubnetA:
+    Description: public subnet
+    Value: !Ref SubnetA
+    Export:
+      Name: "SubnetA"
+  SubnetB:
+    Description: public subnet 2
+    Value: !Ref SubnetB
+    Export:
+      Name: "SubnetB"
+  SubnetC:
+    Description: priavte subnet
+    Value: !Ref SubnetC
+    Export:
+      Name: "SubnetC"
+  SubnetD:
+    Description: private subnet 2
+    Value: !Ref SubnetD
+    Export:
+      Name: "SubnetD"

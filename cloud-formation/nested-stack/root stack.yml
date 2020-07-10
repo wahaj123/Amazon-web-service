@@ -1,0 +1,30 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  Vpcstack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "https://wahaj-webserver.s3.us-east-2.amazonaws.com/nested-stack/vpc.yml"
+
+  elb:
+    DependsOn: Vpcstack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "https://wahaj-webserver.s3.us-east-2.amazonaws.com/nested-stack/internetfacing-elb.yml"
+
+  bastionhost:
+    DependsOn: Vpcstack
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "https://wahaj-webserver.s3.us-east-2.amazonaws.com/nested-stack/bastion-host.yml"
+
+  autoscaling:
+    DependsOn: [Vpcstack, elb, bastionhost]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "https://wahaj-webserver.s3.us-east-2.amazonaws.com/nested-stack/AutoScaling1.yml"
+  db:
+    DependsOn: autoscaling
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: "https://wahaj-webserver.s3.us-east-2.amazonaws.com/nested-stack/ec2-db.yml"
