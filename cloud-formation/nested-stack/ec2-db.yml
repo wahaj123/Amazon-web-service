@@ -1,0 +1,60 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+Resources:
+  wahajdb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: wahaj-db
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId:
+            Fn::ImportValue: "bsgId"
+          Description: ssh connection
+        - IpProtocol: -1
+          # FromPort: 3306
+          # ToPort: 3306
+          SourceSecurityGroupId:
+            Fn::ImportValue: "Ielb"
+          Description: For traffic from Internet
+      GroupDescription: Security Group for demo server
+      VpcId:
+        Fn::ImportValue: "VpcID"
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-east-2a
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+           sudo yum -y update
+           sudo yum -y install aspell aspell-en httpd24 mysql mysql-server php56 php56-cli php56-gd php56-intl php56-mbstring php56-mysqlnd php56-opcache php56-pdo php56-soap php56-xml php56-xmlrpc php56-pspell --skip-broken
+           sudo yum list installed
+           sudo /sbin/chkconfig httpd on
+           sudo /sbin/chkconfig mysqld on
+           sudo /sbin/service httpd start
+           sudo /sbin/service mysqld start
+           sudo yum install -y httpd24 php56 php56-mysqlnd
+           sudo service httpd start
+           sudo chkconfig httpd on
+           echo "<h1> hello </h1>" > /var/www/html/index.html
+           sudo mysqladmin -u root password 'wahaj123a'
+           mysql -u root -pwahaj123a -e  "CREATE USER 'wahajdb'@'localhost' IDENTIFIED BY 'wahaj123a';CREATE DATABASE wahajdb;GRANT ALL PRIVILEGES ON wahajdb.* TO 'wahajdb'@'%';GRANT ALL ON *.* to wahajdb@'%' IDENTIFIED BY 'wahaj123a';FLUSH PRIVILEGES;"
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            DeleteOnTermination: "true"
+            VolumeSize: "8"
+            VolumeType: gp2
+      ImageId: ami-0bdcc6c05dec346bf
+      InstanceType: t2.micro
+      # IamInstanceProfile: !Ref ListS3BucketsInstanceProfile
+      KeyName: wahaj(webserver)
+      NetworkInterfaces:
+        - Description: Primary network interface
+          DeviceIndex: 0
+          SubnetId:
+            Fn::ImportValue: "SubnetC"
+          GroupSet:
+            - !Ref wahajdb

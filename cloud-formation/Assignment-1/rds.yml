@@ -1,0 +1,57 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Parameters:
+  SourceStackName:
+    Description: "Source stack name"
+    Type: String
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: "wahaj-vpc"
+
+  Ec2StackName:
+    Description: "Ec2 Source stack name"
+    Type: String
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: "ec2"
+
+Resources:
+  MyDB:
+    Type: AWS::RDS::DBInstance
+    DependsOn: myDBSubnetGroup
+    Properties:
+      VPCSecurityGroups:
+        - !Ref DBEC2SecurityGroup
+      AllocatedStorage: "5"
+      DBInstanceClass: db.t2.micro
+      Engine: MySQL
+      EngineVersion: "5.7.22"
+      DBName: wahajdb
+      MasterUsername: wahajdb
+      MasterUserPassword: wahaj123a
+      MultiAZ: false
+      DBSubnetGroupName: !Ref myDBSubnetGroup
+  myDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: MySubnetGroup
+      DBSubnetGroupDescription: subnet group
+      SubnetIds:
+        - Fn::ImportValue:
+            Fn::Sub: "${SourceStackName}-PublicSubnet"
+        - Fn::ImportValue:
+            Fn::Sub: "${SourceStackName}-Public1Subnet"
+  DBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Open database for access
+      VpcId:
+        Fn::ImportValue:
+          Fn::Sub: "${SourceStackName}-VpcID"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId:
+            Fn::ImportValue:
+              Fn::Sub: "${Ec2StackName}-sgid"
+
